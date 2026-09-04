@@ -1,0 +1,48 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: scheduling
+  datasource:
+    url: jdbc:mysql://localhost:3306/scheduling_db
+    username: root
+    password: root
+  flyway:
+    enabled: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: true
+  graphql:
+    graphiql:
+      enabled: true
+    schema:
+      printer:
+        enabled: true
+
+security:
+  jwt:
+    public-key: classpath:public.pem
+
+app:
+  rabbit:
+    exchange: appointment.reminders
+    queue: reminder.queue
+    routing-key: appointment.reminder
+  kafka:
+    topic: appointment-events
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

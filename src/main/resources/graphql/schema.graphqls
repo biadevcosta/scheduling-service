@@ -1,0 +1,31 @@
+type Query {
+    "GraphQL requires at least one query; scheduling exposes only mutations."
+    _ping: String!
+}
+
+type Mutation {
+    scheduleAppointment(input: ScheduleInput!): Appointment!
+    editAppointment(input: EditInput!): Appointment!
+}
+
+input ScheduleInput {
+    patientId: ID!
+    doctorId: ID!
+    "ISO-8601 local date-time, e.g. 2026-09-01T14:30:00"
+    scheduledAt: String!
+}
+
+input EditInput {
+    appointmentId: ID!
+    scheduledAt: String
+    "SCHEDULED | COMPLETED | CANCELLED"
+    status: String
+}
+
+type Appointment {
+    id: ID!
+    patientId: ID!
+    doctorId: ID!
+    scheduledAt: String!
+    status: String!
+}
