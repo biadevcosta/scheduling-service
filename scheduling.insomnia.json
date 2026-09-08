@@ -1,0 +1,326 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-09-08T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app",
+  "resources": [
+    {
+      "_id": "wrk_scheduling",
+      "_type": "workspace",
+      "name": "scheduling-service",
+      "description": "Hospital scheduling-service — a GraphQL API (single endpoint POST /graphql). Tokens come from identity-service: run '0 · tokens → login (doctor)' once and every scheduling request pulls its Bearer token from that response. Role gate: DOCTOR/NURSE schedule, DOCTOR edits (and only the owner doctor). Host port 8085 in Docker, 8081 on the host.",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_scheduling",
+      "name": "Base Environment",
+      "data": {
+        "identity_url": "http://localhost:8080",
+        "scheduling_url": "http://localhost:8085",
+        "doctor_email": "doc@hospital.local",
+        "doctor_password": "secret12345",
+        "nurse_email": "smoke@hospital.local",
+        "nurse_password": "secret12345",
+        "admin_email": "admin@hospital.local",
+        "admin_password": "admin12345",
+        "caller_doctor_id": "",
+        "appointment_id": ""
+      },
+      "dataPropertyOrder": {
+        "&": ["identity_url", "scheduling_url", "doctor_email", "doctor_password", "nurse_email", "nurse_password", "admin_email", "admin_password", "caller_doctor_id", "appointment_id"]
+      },
+      "metaSortKey": 1
+    },
+
+    { "_id": "fld_tokens", "_type": "request_group", "parentId": "wrk_scheduling", "name": "0 · tokens (identity-service)", "metaSortKey": 1 },
+    { "_id": "fld_meta", "_type": "request_group", "parentId": "wrk_scheduling", "name": "1 · schema & health (public)", "metaSortKey": 2 },
+    { "_id": "fld_ops", "_type": "request_group", "parentId": "wrk_scheduling", "name": "2 · queries & mutations", "metaSortKey": 3 },
+    { "_id": "fld_errors", "_type": "request_group", "parentId": "wrk_scheduling", "name": "3 · error cases", "metaSortKey": 4 },
+
+    {
+      "_id": "req_login_doctor",
+      "_type": "request",
+      "parentId": "fld_tokens",
+      "name": "POST /auth/login  (doctor)  → 200",
+      "method": "POST",
+      "url": "{{ _.identity_url }}/auth/login",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.doctor_email }}\",\n  \"password\": \"{{ _.doctor_password }}\"\n}"
+      },
+      "description": "Run this first. Every DOCTOR-authenticated request below reads accessToken from this response. If it 401s, register the user via the identity-service collection ('POST /users' as ADMIN, role DOCTOR).",
+      "metaSortKey": 1
+    },
+    {
+      "_id": "req_login_nurse",
+      "_type": "request",
+      "parentId": "fld_tokens",
+      "name": "POST /auth/login  (nurse)  → 200",
+      "method": "POST",
+      "url": "{{ _.identity_url }}/auth/login",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.nurse_email }}\",\n  \"password\": \"{{ _.nurse_password }}\"\n}"
+      },
+      "description": "A NURSE can schedule but not edit. Default points at 'smoke@hospital.local' (seeded by the identity smoke test); change nurse_email if needed.",
+      "metaSortKey": 2
+    },
+    {
+      "_id": "req_login_admin",
+      "_type": "request",
+      "parentId": "fld_tokens",
+      "name": "POST /auth/login  (admin)  → 200",
+      "method": "POST",
+      "url": "{{ _.identity_url }}/auth/login",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.admin_email }}\",\n  \"password\": \"{{ _.admin_password }}\"\n}"
+      },
+      "description": "Only used by the 403 test — an ADMIN token is valid but the wrong role for scheduling.",
+      "metaSortKey": 3
+    },
+
+    {
+      "_id": "req_schema",
+      "_type": "request",
+      "parentId": "fld_meta",
+      "name": "GET /graphql/schema  → 200 (SDL)",
+      "method": "GET",
+      "url": "{{ _.scheduling_url }}/graphql/schema",
+      "headers": [],
+      "description": "The printed GraphQL schema as text. Public (permitAll).",
+      "metaSortKey": 1
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "fld_meta",
+      "name": "GET /actuator/health  → 200 { status: UP }",
+      "method": "GET",
+      "url": "{{ _.scheduling_url }}/actuator/health",
+      "headers": [],
+      "description": "Public health probe.",
+      "metaSortKey": 2
+    },
+
+    {
+      "_id": "req_ping",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "query _ping  → \"ok\"",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"query Ping {\\n  _ping\\n}\",\"variables\":{}}"
+      },
+      "description": "Smoke test. GraphQL requires at least one Query; scheduling exposes only mutations plus this _ping. Any authenticated token works.",
+      "metaSortKey": 1
+    },
+    {
+      "_id": "req_schedule_doctor",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation scheduleAppointment  (DOCTOR) → SCHEDULED",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Schedule($input: ScheduleInput!) {\\n  scheduleAppointment(input: $input) {\\n    id\\n    patientId\\n    doctorId\\n    scheduledAt\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"patientId\":\"pat-1\",\"doctorId\":\"doc-1\",\"scheduledAt\":\"2030-12-01T10:00:00\"}}}"
+      },
+      "description": "Persists the appointment (status SCHEDULED), then publishes a RabbitMQ reminder + a Kafka AppointmentCreated event. 'mutation editAppointment' reads the new id from this response.",
+      "metaSortKey": 2
+    },
+    {
+      "_id": "req_schedule_nurse",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation scheduleAppointment  (NURSE) → SCHEDULED",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_nurse', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Schedule($input: ScheduleInput!) {\\n  scheduleAppointment(input: $input) {\\n    id\\n    doctorId\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"patientId\":\"pat-2\",\"doctorId\":\"doc-2\",\"scheduledAt\":\"2031-03-15T09:30:00\"}}}"
+      },
+      "description": "A NURSE may schedule. The 'not owner' error test edits this appointment (doctorId doc-2) with a DOCTOR token.",
+      "metaSortKey": 3
+    },
+    {
+      "_id": "req_edit_status",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation editAppointment  (status → CANCELLED)",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Edit($input: EditInput!) {\\n  editAppointment(input: $input) {\\n    id\\n    scheduledAt\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"appointmentId\":\"{% response 'body', 'req_schedule_doctor', 'b64::JC5kYXRhLnNjaGVkdWxlQXBwb2ludG1lbnQuaWQ=::46b', 'never', 60 %}\",\"status\":\"CANCELLED\"}}}"
+      },
+      "description": "Edits the appointment from 'scheduleAppointment (DOCTOR)'. NOTE: succeeds only if that appointment's doctorId equals your JWT sub (the identity user id). Since the sample used doctorId 'doc-1', expect an ownership error — see 'scheduleAppointment (owner)' + 'editAppointment (as owner)' for the passing flow.",
+      "metaSortKey": 4
+    },
+    {
+      "_id": "req_schedule_owner",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation scheduleAppointment  (owner-linked)",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Schedule($input: ScheduleInput!) {\\n  scheduleAppointment(input: $input) {\\n    id\\n    doctorId\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"patientId\":\"pat-3\",\"doctorId\":\"{{ _.caller_doctor_id }}\",\"scheduledAt\":\"2031-06-01T14:00:00\"}}}"
+      },
+      "description": "Schedules with doctorId = caller_doctor_id. Set that env var to your DOCTOR's identity user id (the JWT 'sub' — decode the token at jwt.io, or read it from identity-service). Then 'editAppointment (as owner)' can edit it.",
+      "metaSortKey": 5
+    },
+    {
+      "_id": "req_edit_owner",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation editAppointment  (as owner) → updated",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Edit($input: EditInput!) {\\n  editAppointment(input: $input) {\\n    id\\n    scheduledAt\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"appointmentId\":\"{% response 'body', 'req_schedule_owner', 'b64::JC5kYXRhLnNjaGVkdWxlQXBwb2ludG1lbnQuaWQ=::46b', 'never', 60 %}\",\"scheduledAt\":\"2031-06-02T15:30:00\"}}}"
+      },
+      "description": "Run right after 'scheduleAppointment (owner-linked)'. Same doctor, so the ownership check passes → 200 with the new scheduledAt. Also publishes a Kafka AppointmentUpdated event.",
+      "metaSortKey": 6
+    },
+    {
+      "_id": "req_edit_manual",
+      "_type": "request",
+      "parentId": "fld_ops",
+      "name": "mutation editAppointment  ({{ _.appointment_id }}, manual)",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Edit($input: EditInput!) {\\n  editAppointment(input: $input) {\\n    id\\n    scheduledAt\\n    status\\n  }\\n}\",\"variables\":{\"input\":{\"appointmentId\":\"{{ _.appointment_id }}\",\"status\":\"COMPLETED\"}}}"
+      },
+      "description": "Fallback: paste an id into the 'appointment_id' env var and run this (must be owned by your doctor).",
+      "metaSortKey": 7
+    },
+
+    {
+      "_id": "req_err_no_token",
+      "_type": "request",
+      "parentId": "fld_errors",
+      "name": "scheduleAppointment  (no token) → 401",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation { scheduleAppointment(input: { patientId: \\\"x\\\", doctorId: \\\"y\\\", scheduledAt: \\\"2030-12-01T10:00:00\\\" }) { id } }\",\"variables\":{}}"
+      },
+      "description": "No Authorization header → HTTP 401 (rejected by the resource server before GraphQL runs).",
+      "metaSortKey": 1
+    },
+    {
+      "_id": "req_err_wrong_role",
+      "_type": "request",
+      "parentId": "fld_errors",
+      "name": "scheduleAppointment  (ADMIN token) → 403 / forbidden",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_admin', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Schedule($input: ScheduleInput!) {\\n  scheduleAppointment(input: $input) { id }\\n}\",\"variables\":{\"input\":{\"patientId\":\"pat-9\",\"doctorId\":\"doc-9\",\"scheduledAt\":\"2030-12-01T10:00:00\"}}}"
+      },
+      "description": "Valid token, wrong role. @PreAuthorize(\"hasAnyRole('DOCTOR','NURSE')\") → GraphQL error with FORBIDDEN / access denied (HTTP 200 body with errors[]).",
+      "metaSortKey": 2
+    },
+    {
+      "_id": "req_err_past_date",
+      "_type": "request",
+      "parentId": "fld_errors",
+      "name": "scheduleAppointment  (past date) → validation error",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Schedule($input: ScheduleInput!) {\\n  scheduleAppointment(input: $input) { id }\\n}\",\"variables\":{\"input\":{\"patientId\":\"pat-1\",\"doctorId\":\"doc-1\",\"scheduledAt\":\"2000-01-01T10:00:00\"}}}"
+      },
+      "description": "Domain rule: scheduledAt must be in the future. Expect errors[] with a BAD_REQUEST-style message and no data.",
+      "metaSortKey": 3
+    },
+    {
+      "_id": "req_err_edit_unknown",
+      "_type": "request",
+      "parentId": "fld_errors",
+      "name": "editAppointment  (unknown id) → not found",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Edit($input: EditInput!) {\\n  editAppointment(input: $input) { id }\\n}\",\"variables\":{\"input\":{\"appointmentId\":\"does-not-exist\",\"status\":\"CANCELLED\"}}}"
+      },
+      "description": "No appointment with that id → errors[] (not found).",
+      "metaSortKey": 4
+    },
+    {
+      "_id": "req_err_not_owner",
+      "_type": "request",
+      "parentId": "fld_errors",
+      "name": "editAppointment  (not the owner doctor) → forbidden",
+      "method": "POST",
+      "url": "{{ _.scheduling_url }}/graphql",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {% response 'body', 'req_login_doctor', 'b64::JC5hY2Nlc3NUb2tlbg==::46b', 'never', 60 %}" }
+      ],
+      "body": {
+        "mimeType": "application/graphql",
+        "text": "{\"query\":\"mutation Edit($input: EditInput!) {\\n  editAppointment(input: $input) { id }\\n}\",\"variables\":{\"input\":{\"appointmentId\":\"{% response 'body', 'req_schedule_nurse', 'b64::JC5kYXRhLnNjaGVkdWxlQXBwb2ludG1lbnQuaWQ=::46b', 'never', 60 %}\",\"status\":\"CANCELLED\"}}}"
+      },
+      "description": "Run after 'scheduleAppointment (NURSE)' (doctorId doc-2). This DOCTOR token's sub != doc-2, so Appointment.edit rejects it → errors[] (only the owner doctor can edit).",
+      "metaSortKey": 5
+    }
+  ]
+}

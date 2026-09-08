@@ -1,6 +1,6 @@
 services:
   mysql-scheduling:
-    image: mysql:8.0
+    image: mysql:8
     container_name: mysql-scheduling
     restart: unless-stopped
     environment:
@@ -10,6 +10,11 @@ services:
       - "3306:3306"
     volumes:
       - mysql-scheduling-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   rabbitmq:
     image: rabbitmq:3.13-management
@@ -18,6 +23,11 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
 
   kafka:
     image: apache/kafka:3.8.0
@@ -28,13 +38,76 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # two broker listeners: EXTERNAL for clients on the host (localhost:9092),
+      # INTERNAL for clients inside the compose network (kafka:19092)
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  scheduling:
+    build: .
+    container_name: scheduling-service
+    restart: unless-stopped
+    depends_on:
+      mysql-scheduling:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      # host 8085 -> container 8081 (8081 on the host is taken by an unrelated project)
+      - "8085:8081"
+    environment:
+      # compose-network hostnames (the host ports above are only for tools running on the host)
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-scheduling:3306/scheduling_db
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: "5672"
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+
+  # Web Kafka browser — topics, partitions, message key/value/headers at http://localhost:8084
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8084:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  # Web DB admin — browse scheduling_db at http://localhost:8083 (login: root / root, already pre-filled)
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: phpmyadmin-scheduling
+    restart: unless-stopped
+    depends_on:
+      mysql-scheduling:
+        condition: service_healthy
+    ports:
+      - "8083:80"
+    environment:
+      PMA_HOST: mysql-scheduling
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: root
+      UPLOAD_LIMIT: 64M
 
 volumes:
   mysql-scheduling-data:

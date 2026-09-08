@@ -49,16 +49,53 @@ Rule enforcement:
 
 ## Run locally
 
-```bash
-# 1. backing services (MySQL + RabbitMQ + Kafka)
-docker compose up -d
+Everything in containers (builds the image, waits for MySQL / RabbitMQ / Kafka to be healthy):
 
-# 2. the service
+```bash
+docker compose up --build
+```
+
+That starts `mysql-scheduling` (3306), `rabbitmq` (5672 / management UI 15672, guest/guest),
+`kafka` (9092), **`scheduling-service`** (host port **8085** → container 8081), plus two web
+consoles for inspecting what the service emits:
+
+| Tool | URL | Shows |
+|---|---|---|
+| RabbitMQ management | <http://localhost:15672> (guest/guest) | `reminder.queue` — *Queues → reminder.queue → Get messages* (Requeue = Yes to peek) |
+| Kafka UI | <http://localhost:8084> | `appointment-events` — *Topics → appointment-events → Messages* (key / value / headers) |
+| phpMyAdmin | <http://localhost:8083> (root/root) | `scheduling_db.appointments` |
+
+> The container publishes on host **8085** because 8081 is often taken locally; change the
+> `ports` mapping in `docker-compose.yml` if you want 8081. Running on the host (below) still
+> uses 8081.
+
+Or backing services only, app on the host (dev, port 8081):
+
+```bash
+docker compose up -d mysql-scheduling rabbitmq kafka
 ./mvnw spring-boot:run
 ```
 
-GraphiQL: <http://localhost:8081/graphiql>. Add an `Authorization: Bearer <token>` header
-(get a token from `identity-service` `POST /auth/login`), then:
+Kafka advertises two listeners — `localhost:9092` for host clients and `kafka:19092` inside the
+compose network — so both ways work.
+
+## API docs (GraphQL)
+
+This is a GraphQL API, so the interactive docs are **GraphiQL** (the GraphQL analog of Swagger UI),
+not OpenAPI:
+
+URLs below use host port **8085** (Docker). On the host (`./mvnw spring-boot:run`) it's **8081**.
+
+| URL | What |
+|---|---|
+| <http://localhost:8085/graphiql> | GraphiQL explorer — schema browser + query runner. Open the **Headers** pane and add `{"Authorization":"Bearer <token>"}` (token from `identity-service` `POST /auth/login`), then run a mutation. |
+| <http://localhost:8085/graphql/schema> | the SDL schema as text |
+| `POST http://localhost:8085/graphql` | the endpoint itself (JWT required) |
+
+`/graphiql`, `/graphiql/**` and `/graphql/schema` are `permitAll` in `SecurityConfig`; `/graphql`
+requires a valid `DOCTOR`/`NURSE` token.
+
+Example — add the `Authorization: Bearer <token>` header in GraphiQL, then:
 
 ```graphql
 mutation {
@@ -76,6 +113,14 @@ mutation {
 
 Check the message in the RabbitMQ UI (<http://localhost:15672>, guest/guest) and the row in
 `appointments`.
+
+### Insomnia collection
+
+`scheduling.insomnia.json` covers `_ping`, `scheduleAppointment` (DOCTOR + NURSE), `editAppointment`
+(owner + not-owner), the SDL/health endpoints and the error cases (401 / forbidden / past-date /
+not-found). Import it, run **`0 · tokens → login (doctor)`** once (it hits `identity-service` on
+`identity_url`) and the Bearer token chains into every other request. Set `caller_doctor_id` in the
+environment for the owner-edit flow.
 
 ## Tests
 
