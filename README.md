@@ -10,6 +10,23 @@ then publishes**:
 
 Port: **8081**.
 
+> Part of the [Hospital Appointment System](../README.md) — see the root README for the
+> system-wide architecture, business rules, and how to run all four services together.
+
+## Key features
+
+- **`scheduleAppointment`** and **`editAppointment`** GraphQL mutations, guarded by role
+  (`DOCTOR`/`NURSE` schedule; only `DOCTOR` edits).
+- **Ownership enforcement**: only the doctor who owns an appointment (`doctorId`) may edit it —
+  checked inside the domain, not only by the role gate.
+- **Business invariants**: `scheduledAt` must be in the future at both create and edit time;
+  `patientId`/`doctorId` are required; status only moves between valid enum values.
+- **Persist-then-publish**: every write hits `scheduling_db` first, then fans out to RabbitMQ (a
+  reminder for `notification-service`) and Kafka (an event for `history-service`'s read model) —
+  never the other way around.
+- This is the **only** service in the system that produces appointment events — it is the single
+  source of truth for appointment data.
+
 ## Architecture (Clean Architecture)
 
 ```
